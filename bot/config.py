@@ -8,8 +8,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-# In production /opt/mediodl-bot, in dev repo root
-# Try /opt/mediodl-bot/.env first, then repo .env
 for p in [Path("/opt/mediodl-bot/.env"), BASE_DIR / ".env", BASE_DIR / ".env.example"]:
     if p.exists():
         load_dotenv(p, override=False)
@@ -32,6 +30,7 @@ def _bool(key: str, default: bool = False) -> bool:
 # ---- Core ----
 BOT_TOKEN: str = _str("BOT_TOKEN", "")
 BOT_NAME: str = _str("BOT_NAME", "MediODL")
+BOT_USERNAME: str = _str("BOT_USERNAME", "")
 DEFAULT_LANG: str = _str("DEFAULT_LANG", "fa")
 
 _raw_admins = _str("ADMIN_IDS", "")
@@ -49,11 +48,17 @@ COOKIES_DIR = Path(_str("COOKIES_DIR", str(Path("/opt/mediodl-bot/cookies") if P
 COOKIES_YT = COOKIES_DIR / "youtube.txt"
 COOKIES_IG = COOKIES_DIR / "instagram.txt"
 COOKIES_TT = COOKIES_DIR / "tiktok.txt"
+COOKIES_PIN = COOKIES_DIR / "pinterest.txt"
+COOKIES_TW = COOKIES_DIR / "twitter.txt"
+COOKIES_FB = COOKIES_DIR / "facebook.txt"
+COOKIES_SC = COOKIES_DIR / "soundcloud.txt"
+COOKIES_SP = COOKIES_DIR / "spotify.txt"
+COOKIES_TH = COOKIES_DIR / "threads.txt"
 
 # ---- Limits ----
 MAX_VIDEO_HEIGHT: int = _int("MAX_VIDEO_HEIGHT", 1080)
 MAX_UPLOAD_MB: int = _int("MAX_UPLOAD_MB", 2000)
-MAX_DURATION_SEC: int = _int("MAX_DURATION_SEC", 3600)  # 1h
+MAX_DURATION_SEC: int = _int("MAX_DURATION_SEC", 3600)
 RATE_LIMIT_PER_HOUR: int = _int("RATE_LIMIT_PER_HOUR", 20)
 RATE_LIMIT_CONCURRENT: int = _int("RATE_LIMIT_CONCURRENT", 2)
 
@@ -71,25 +76,53 @@ DEFAULT_SETTINGS = {
     "max_duration_sec": str(MAX_DURATION_SEC),
     "rate_limit_per_hour": str(RATE_LIMIT_PER_HOUR),
     "caption_template": "🎬 {title}\n👁️ {view_count} بازدید | 👍 {like_count} لایک\n📺 {uploader}\n\n🤖 @{bot_username}",
-    "show_audio_separately": "1",  # always deliver audio separately per spec
-    "auto_delete_hours": "0",  # 0 = never
-    "welcome_message": "سلام {name} عزیز 👋\n\nفقط لینک یوتیوب، اینستاگرام یا تیک‌تاک رو بفرست تا همین‌جا ویدیو با بهترین کیفیت + صدای جداگانه‌ش رو برات بفرستم. ✨\n\n📌 بدون نیاز به هیچ دستوری — فقط لینک!",
+    "show_audio_separately": "1",
+    "auto_delete_hours": "0",
+    "welcome_message": (
+        "سلام {name} عزیز 👋\n\n"
+        "من <b>{bot_name}</b> هستم — ربات باحال دانلود! 😎\n"
+        "فقط لینک بفرست تا سریع ویدیو با بهترین کیفیت + صدای جداگانه‌ش رو برات بیارم 🎬🎧\n\n"
+        "📌 پشتیبانی: یوتیوب، اینستاگرام، تیک‌تاک، پینترست، توییتر، فیسبوک، ساندکلاد، اسپاتیفای، تردز\n"
+        "✨ بدون دستور — فقط لینک!"
+    ),
     "force_join_enabled": "0",
     "maintenance_mode": "0",
     "maintenance_text": "🛠️ ربات در حال بروزرسانی است، لطفاً دقایقی دیگر تلاش کنید.",
+    # Captcha / Anti-spam
+    "captcha_enabled": "0",
+    "captcha_mode": "emoji",  # emoji | math | both
+    "captcha_timeout_sec": "120",
+    "antispam_enabled": "1",
+    "antispam_max_per_min": "5",
+    "antispam_ban_minutes": "10",
+    # Fun
+    "fun_mode": "1",
+    "fun_greeting_enabled": "1",
+    # Quality selection
+    "quality_selection": "1",  # 1 = user picks, 0 = auto best
+    # Log channel
+    "log_channel": "",
+    "log_to_admin_dm": "1",
+    "log_new_users": "1",
+    "log_downloads": "1",
+    "log_errors": "1",
+    "daily_report_enabled": "0",
+    "daily_report_time": "09:00",
 }
 
 # ---- Runtime checks ----
 IS_PRODUCTION = Path("/opt/mediodl-bot").exists()
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Platform detection helpers
 YOUTUBE_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)/(watch\?v=|shorts/|embed/|v/)?[A-Za-z0-9_\-]{6,}", re.I)
 YOUTUBE_SHORT_RE = re.compile(r"youtu\.be/|youtube\.com/(watch|shorts|embed)", re.I)
 INSTAGRAM_RE = re.compile(r"(https?://)?(www\.)?instagram\.com/(p|reel|reels|stories|tv)/[A-Za-z0-9_\-./?=&%]+", re.I)
 TIKTOK_RE = re.compile(r"(https?://)?(www\.|vm\.|vt\.)?tiktok\.com/[^\s]+", re.I)
-# Generic URL extractor
 URL_RE = re.compile(r"https?://[^\s<>\"]+", re.I)
+
+# Spotify handling (needs special search fallback)
+SPOTIFY_RE = re.compile(r"https?://open\.spotify\.com/(track|album|playlist)/[A-Za-z0-9]+", re.I)
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS

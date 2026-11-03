@@ -1,21 +1,18 @@
 [Unit]
-Description=MediODL Telegram Bot - Professional Media Downloader (YouTube/Instagram/TikTok)
+Description=MediGo (MediODL) Telegram Bot - 9 Platforms Media Downloader
 After=network-online.target nss-lookup.target
 Wants=network-online.target
-# Never conflict with 3x-ui or D_bot — no ordering dependency on nginx/postgres/redis
-# This bot uses polling, not webhook, so no nginx needed
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/mediodl-bot
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/opt/mediodl-bot/venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/opt/mediodl-bot/venv/bin/python -m bot
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
-# --- Resource limits to protect xray VPN performance (coexistence) ---
-# CPU 100% of one core max, RAM 800M max
 CPUQuota=100%
 MemoryMax=800M
 MemoryHigh=600M
@@ -23,13 +20,11 @@ TasksMax=128
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
-# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/mediodl-bot /var/log
-# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mediodl-bot
