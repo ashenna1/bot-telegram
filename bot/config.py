@@ -29,8 +29,8 @@ def _bool(key: str, default: bool = False) -> bool:
 
 # ---- Core ----
 BOT_TOKEN: str = _str("BOT_TOKEN", "")
-BOT_NAME: str = _str("BOT_NAME", "MediODL")
-BOT_USERNAME: str = _str("BOT_USERNAME", "")
+BOT_NAME: str = _str("BOT_NAME", "لینک قاپ")
+BOT_USERNAME: str = _str("BOT_USERNAME", "linkghap_bot")
 DEFAULT_LANG: str = _str("DEFAULT_LANG", "fa")
 
 _raw_admins = _str("ADMIN_IDS", "")
@@ -80,10 +80,11 @@ DEFAULT_SETTINGS = {
     "auto_delete_hours": "0",
     "welcome_message": (
         "سلام {name} عزیز 👋\n\n"
-        "من <b>{bot_name}</b> هستم — ربات باحال دانلود! 😎\n"
-        "فقط لینک بفرست تا سریع ویدیو با بهترین کیفیت + صدای جداگانه‌ش رو برات بیارم 🎬🎧\n\n"
-        "📌 پشتیبانی: یوتیوب، اینستاگرام، تیک‌تاک، پینترست، توییتر، فیسبوک، ساندکلاد، اسپاتیفای، تردز\n"
-        "✨ بدون دستور — فقط لینک!"
+        "من <b>{bot_name}</b> هستم — لینک‌قاپِ حرفه‌ای تو! 😎⚡️\n"
+        "هر لینکی بفرستی، در یک چشم‌برهم‌زدن برات می‌قاپم:\n"
+        "🎬 ویدیو با بهترین کیفیت + 🎧 صدای جدا\n\n"
+        "📌 ۹ پلتفرم: یوتیوب، اینستاگرام، تیک‌تاک، پینترست، توییتر، فیسبوک، ساندکلاد، اسپاتیفای، تردز\n"
+        "✨ فقط لینک بفرست — بقیه‌اش با من!"
     ),
     "force_join_enabled": "0",
     "maintenance_mode": "0",
