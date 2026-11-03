@@ -22,7 +22,7 @@ from bot.db import (
     check_flood_per_min, add_warning
 )
 from bot.utils.links import find_first_supported_url, platform_emoji, platform_name_fa, is_audio_only_platform
-from bot.utils.helpers import build_caption, fmt_size, fmt_duration, truncate, random_compliment, random_fact, random_joke, fun_greeting
+from bot.utils.helpers import build_caption, fmt_size, fmt_duration, truncate, random_compliment, random_fact, random_joke, fun_greeting, get_unique_joke, get_unique_fact
 from bot.utils.captcha import generate_captcha, captcha_expired
 from bot.utils.downloader import download_media
 from bot.utils.force_join import check_user_joined
@@ -197,20 +197,65 @@ async def cb_captcha(callback: CallbackQuery, bot: Bot):
         else:
             await callback.answer(f"❌ اشتباه بود! {3-att} فرصت دیگه داری — دوباره سعی کن", show_alert=True)
 
-# ---- Fun ----
+# ---- Fun (non-repeating, 500 each) ----
 @router.callback_query(F.data == "fun:thanks")
 async def cb_thanks(callback: CallbackQuery):
     await callback.answer(random_compliment(), show_alert=True)
 
 @router.callback_query(F.data == "fun:fact")
 async def cb_fact(callback: CallbackQuery):
-    await callback.message.answer(random_fact(), parse_mode="HTML")
+    # Non-repeating per user
+    try:
+        text, seen, total = await get_unique_fact(callback.from_user.id)
+        progress = f"\n\n<i>📚 {seen}/{total} فکت — همه‌اش را ببین، بعد دوباره از اول!</i>"
+        # Add button to get another
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 فکت بعدی", callback_data="fun:fact"), InlineKeyboardButton(text="😂 جوک بگو", callback_data="fun:joke")]
+        ])
+        await callback.message.answer(text + progress, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        log.warning("fact error %s", e)
+        await callback.message.answer(random_fact(), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "fun:joke")
 async def cb_joke(callback: CallbackQuery):
-    await callback.message.answer(random_joke(), parse_mode="HTML")
+    try:
+        text, seen, total = await get_unique_joke(callback.from_user.id)
+        progress = f"\n\n<i>😂 {seen}/{total} جوک — تکراری نمی‌فرستم تا همه را ببینی!</i>"
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 جوک بعدی", callback_data="fun:joke"), InlineKeyboardButton(text="📚 فکت بگو", callback_data="fun:fact")]
+        ])
+        await callback.message.answer(text + progress, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        log.warning("joke error %s", e)
+        await callback.message.answer(random_joke(), parse_mode="HTML")
     await callback.answer()
+
+@router.message(Command("joke"))
+async def cmd_joke(message: Message):
+    text, seen, total = await get_unique_joke(message.from_user.id)
+    await message.answer(text + f"\n\n<i>😂 {seen}/{total}</i>", parse_mode="HTML")
+
+@router.message(Command("fact"))
+async def cmd_fact(message: Message):
+    text, seen, total = await get_unique_fact(message.from_user.id)
+    await message.answer(text + f"\n\n<i>📚 {seen}/{total}</i>", parse_mode="HTML")
+
+@router.message(Command("funstats"))
+async def cmd_funstats(message: Message):
+    from bot.db import get_fun_stats
+    stats = await get_fun_stats(message.from_user.id)
+    from bot.utils.helpers import get_jokes_count, get_facts_count
+    await message.answer(
+        f"📊 <b>آمار فان تو</b>\n"
+        f"😂 جوک: <b>{stats.get('joke',0)}/{get_jokes_count()}</b>\n"
+        f"📚 فکت: <b>{stats.get('fact',0)}/{get_facts_count()}</b>\n"
+        f"وقتی همه را دیدی، خودکار از اول شروع می‌شود!",
+        parse_mode="HTML"
+    )
 
 @router.callback_query(F.data == "fun:help")
 async def cb_fun_help(callback: CallbackQuery):

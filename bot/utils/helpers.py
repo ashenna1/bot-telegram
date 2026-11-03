@@ -1,10 +1,11 @@
 """
-General helpers
+General helpers - with 500 professional jokes/facts, non-repeating per user
 """
 import time
 import re
 import html
 import random
+import json
 from pathlib import Path
 
 def fmt_duration(sec: int | float | None) -> str:
@@ -75,50 +76,107 @@ def truncate(s: str, n=4000) -> str:
         return s
     return s[:n] + "…"
 
-# ---- Fun helpers ----
-FUN_COMPLIMENTS = [
-    "دمت گرم که از ربات استفاده می‌کنی! 🔥",
-    "تو واقعاً سلیقه‌ات حرف نداره 😎",
-    "این ویدیو رو که دیدم گفتم حتماً بفرستم برات! 🎬",
-    "یه انتخاب عالی دیگه! ✨",
-    "ربات داره با عشق برات دانلود می‌کنه 💖",
-]
+# ---- Load jokes/facts from JSON ----
+_JOKES: list[str] | None = None
+_FACTS: list[str] | None = None
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-FUN_FACTS = [
-    "💡 می‌دونستی؟ هر روز بیش از ۱ میلیارد ساعت ویدیو در یوتیوب دیده می‌شه!",
-    "🎵 تیک‌تاک رو یه جوون ۲۰ ساله تو ۲۰۱۶ ساخت و الان غوغاست!",
-    "📌 پینترست اول به عنوان دفتر ایده برای عروسی ساخته شد!",
-    "🐦 توییتر اولش می‌خواست فقط پیامک ۱۴۰ کاراکتری باشه!",
-    "🎧 ساندکلاد جاییه که خیلی از ستاره‌های امروز اولش معروف شدن!",
-]
+def _load_jokes() -> list[str]:
+    global _JOKES
+    if _JOKES is not None:
+        return _JOKES
+    for p in [BASE_DIR / "bot" / "data" / "jokes.json", Path("/opt/mediodl-bot/bot/data/jokes.json"), Path("bot/data/jokes.json")]:
+        if p.exists():
+            try:
+                _JOKES = json.loads(p.read_text(encoding="utf-8"))
+                return _JOKES
+            except Exception:
+                continue
+    # fallback
+    _JOKES = [
+        "😂 یه ربات به رفیقش میگه چرا ناراحتی؟ میگه وای‌فای ندارم! 💔",
+        "🤣 معلم میگه چرا مشقاتو ننوشتی؟ میگه قلمم شارژ نداشت!",
+    ]
+    return _JOKES
 
-FUN_JOKES = [
-    "😂 یه ربات به رفیقش میگه: چرا ناراحتی؟ میگه: وای‌فای ندارم، افسرده شدم!",
-    "🤖 ربات عاشق شد؟ حالا هر روز بهش میگه: I love you 3000... bytes!",
-    "😄 چرا کامپیوتر هیچ‌وقت گرسنه نمی‌شه؟ چون همیشه یه عالمه چیپس داره! (Chips 😜)",
-]
+def _load_facts() -> list[str]:
+    global _FACTS
+    if _FACTS is not None:
+        return _FACTS
+    for p in [BASE_DIR / "bot" / "data" / "facts.json", Path("/opt/mediodl-bot/bot/data/facts.json"), Path("bot/data/facts.json")]:
+        if p.exists():
+            try:
+                _FACTS = json.loads(p.read_text(encoding="utf-8"))
+                return _FACTS
+            except Exception:
+                continue
+    _FACTS = [
+        "💡 مغز انسان ۸۶ میلیارد نورون دارد!",
+        "🌌 نور خورشید ۸ دقیقه تا زمین می‌آید!",
+    ]
+    return _FACTS
 
+def get_jokes_count() -> int:
+    return len(_load_jokes())
+
+def get_facts_count() -> int:
+    return len(_load_facts())
+
+# Legacy sync random (fallback if DB not available)
 def random_compliment() -> str:
-    return random.choice(FUN_COMPLIMENTS)
+    compliments = [
+        "دمت گرم که از ربات استفاده می‌کنی! 🔥",
+        "تو واقعاً سلیقه‌ات حرف نداره 😎",
+        "این ویدیو رو که دیدم گفتم حتماً بفرستم برات! 🎬",
+        "یه انتخاب عالی دیگه! ✨",
+        "ربات داره با عشق برات دانلود می‌کنه 💖",
+        "لینک‌قاپ همیشه هواتو داره! ⚡️",
+        "عالیه! اینم برات قاپیدم 😎",
+    ]
+    return random.choice(compliments)
 
 def random_fact() -> str:
-    return random.choice(FUN_FACTS)
+    return random.choice(_load_facts())
 
 def random_joke() -> str:
-    return random.choice(FUN_JOKES)
+    return random.choice(_load_jokes())
+
+# New async non-repeating (per user) - must be called with await
+async def get_unique_joke(user_id: int) -> tuple[str, int, int]:
+    """
+    Returns (joke_text, seen_so_far, total)
+    Guarantees no repeat until all 500 seen.
+    """
+    from bot.db import get_next_fun_item
+    jokes = _load_jokes()
+    total = len(jokes)
+    idx = await get_next_fun_item(user_id, "joke", total)
+    # After insertion, seen = previous +1
+    from bot.db import get_fun_stats
+    stats = await get_fun_stats(user_id)
+    seen = stats.get("joke", 0)
+    return jokes[idx], seen, total
+
+async def get_unique_fact(user_id: int) -> tuple[str, int, int]:
+    from bot.db import get_next_fun_item, get_fun_stats
+    facts = _load_facts()
+    total = len(facts)
+    idx = await get_next_fun_item(user_id, "fact", total)
+    stats = await get_fun_stats(user_id)
+    seen = stats.get("fact", 0)
+    return facts[idx], seen, total
 
 def fun_greeting(name: str) -> str:
     greetings = [
         f"سلام {name} عزیز! 👋 حالت چطوره امروز؟ 😊",
         f"درود {name} جان! 🌟 آماده‌ای یه لینک بفرستی؟",
-        f"هی {name}! 😎 ربات باحال حاضر و آماده‌ست!",
+        f"هی {name}! 😎 لینک‌قاپ حاضر و آماده‌ست!",
         f"سلام سلام {name} 🎉 بیا یه ویدیو خفن دانلود کنیم!",
+        f"به به {name} اومد! ⚡️ لینک‌قاپ در خدمتته!",
     ]
     return random.choice(greetings)
 
-# ---- Spotify helper (search fallback) ----
 def spotify_to_search_query(meta: dict) -> str:
-    """Convert Spotify track meta to YouTube search query."""
     title = meta.get("title") or meta.get("track") or ""
     artist = meta.get("artist") or meta.get("uploader") or ""
     if artist and title:

@@ -4,8 +4,10 @@
 cookies.txt
 *.cookies
 
-# Data & runtime
+# Data & runtime (but keep bot fun data)
 data/
+!bot/data/
+!bot/data/**
 tmp/
 downloads/
 logs/
