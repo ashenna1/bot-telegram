@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# mediodl CLI - Management tool (coexistence-safe, never touches 3x-ui/D_bot)
+set -e
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+APP_DIR="/opt/mediodl-bot"
+SERVICE="mediodl-bot"
+
+info(){ echo -e "${BLUE}[mediodl]${NC} $*"; }
+ok(){ echo -e "${GREEN}✔${NC} $*"; }
+warn(){ echo -e "${YELLOW}⚠${NC} $*"; }
+err(){ echo -e "${RED}✘${NC} $*"; }
+
+usage(){
+cat <<'EOF'
+Usage: mediodl <command> [args]
+
+Commands:
+  status              نمایش وضعیت سرویس + منابع
+  logs [-f]           نمایش لاگ (journalctl)
+  restart             ریستارت ربات
+  stop / start        توقف / شروع
+  update              بروزرسانی از گیتهاب (git pull + pip + restart)
+  config              ویرایش فایل .env
+  token <TOKEN>       تنظیم سریع توکن ربات
+  admin <ID>          افزودن ادمین (آیدی عددی)
+  backup              بکاپ دیتابیس و کوکی‌ها
+  cleanup             پاکسازی پوشه tmp
+  uninstall           حذف کامل (با تأیید)
+  help                این راهنما
+
+Paths (ایزوله از 3x-ui و D_bot):
+  App:      /opt/mediodl-bot
+  Service:  /etc/systemd/system/mediodl-bot.service
+  CLI:      /usr/local/bin/mediodl
+  DB:       /opt/mediodl-bot/data/bot.db
+  Cookies:  /opt/mediodl-bot/cookies/
+  TMP:      /opt/mediodl-bot/tmp/
+
+Coexistence:
+  این ابزار هرگز nginx, postgres:5432, redis, x-ui, d-bot را دستکاری نمی‌کند.
+EOF
+}
+
+cmd_status(){
+  echo -e "${GREEN}==== MediODL Status ====${NC}"
+  systemctl is-active "$SERVICE" && ok "Service: $(systemctl is-active $SERVICE)" || err "Service: $(systemctl is-active $SERVICE 2>&1)"
+  systemctl is-enabled "$SERVICE" 2>&1 | grep -q enabled && ok "Enabled: yes" || warn "Enabled: $(systemctl is-enabled $SERVICE 2>&1)"
+  echo
+  if [[ -f "$APP_DIR/.env" ]]; then
+    echo -e "${BLUE}--- .env (masked) ---${NC}"
+    sed 's/BOT_TOKEN=.*/BOT_TOKEN=****/' "$APP_DIR/.env" | sed 's/ADMIN_IDS=.*/ADMIN_IDS=****/'
+    echo
+  fi
+  echo -e "${BLUE}--- Resources ---${NC}"
+  free -h | head -2
+  df -h / | tail -1
+  echo
+  if [[ -f "$APP_DIR/data/bot.db" ]]; then
+    echo -e "${BLUE}--- DB ---${NC}"
+    ls -lh "$APP_DIR/data/bot.db"
+    sqlite3 "$APP_DIR/data/bot.db" "SELECT 'users='||COUNT(*) FROM users; SELECT 'channels='||COUNT(*) FROM channels; SELECT 'ads='||COUNT(*) FROM ads;" 2>&1 || echo "(sqlite3 not installed, skip)"
+  fi
+  echo
+  echo -e "${BLUE}--- Coexistence check ---${NC}"
+  for p in "/usr/local/x-ui" "/opt/d-bot" "/usr/local/bin/x-ui" "/usr/local/bin/dbot"; do
+    [[ -e "$p" ]] && ok "Found $p (untouched)" || echo "  - $p not found"
+  done
+  ss -tulpn 2>/dev/null | grep -E ':(80|443|8000|5432)\b' | head -5 || echo "  ports 80/443/8000/5432: (ss not available or none)"
+}
+
+cmd_logs(){
+  if [[ "$1" == "-f" ]]; then
+    journalctl -u "$SERVICE" -f --no-pager
+  else
+    journalctl -u "$SERVICE" -n 100 --no-pager
+  fi
+}
+
+case "${1:-help}" in
+  status) cmd_status ;;
+  logs) shift; cmd_logs "$@" ;;
+  restart) info "Restarting $SERVICE..."; systemctl restart "$SERVICE"; ok "Restarted. Check: mediodl logs" ;;
+  stop) systemctl stop "$SERVICE"; ok "Stopped" ;;
+  start) systemctl start "$SERVICE"; ok "Started" ;;
+  config) ${EDITOR:-nano} "$APP_DIR/.env" ;;
+  token)
+    [[ -z "$2" ]] && { err "Usage: mediodl token <BOT_TOKEN>"; exit 1; }
+    sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=$2|" "$APP_DIR/.env" 2>&1 || echo "BOT_TOKEN=$2" >> "$APP_DIR/.env"
+    ok "Token updated. Restarting..."
+    systemctl restart "$SERVICE"
+    ;;
+  admin)
+    [[ -z "$2" ]] && { err "Usage: mediodl admin <USER_ID>"; exit 1; }
+    if grep -q "^ADMIN_IDS=" "$APP_DIR/.env"; then
+      # append if not exists
+      if grep -q "$2" "$APP_DIR/.env"; then warn "Admin $2 already exists"; else
+        sed -i "s|^ADMIN_IDS=.*|&,$2|" "$APP_DIR/.env"
+        ok "Admin $2 added. Restarting..."
+        systemctl restart "$SERVICE"
+      fi
+    else
+      echo "ADMIN_IDS=$2" >> "$APP_DIR/.env"
+      systemctl restart "$SERVICE"
+    fi
+    ;;
+  backup)
+    TS=$(date +%Y%m%d_%H%M%S)
+    OUT="/root/mediodl-backup-$TS.tar.gz"
+    tar -czf "$OUT" -C /opt mediodl-bot/data mediodl-bot/cookies mediodl-bot/.env 2>&1 | head -20
+    ok "Backup saved to $OUT"
+    ls -lh "$OUT"
+    ;;
+  cleanup)
+    info "Cleaning $APP_DIR/tmp ..."
+    find "$APP_DIR/tmp" -type f -mmin +10 -delete 2>&1 | head
+    find "$APP_DIR/tmp" -type d -empty -delete 2>&1 | head
+    ok "Cleaned. Size now: $(du -sh $APP_DIR/tmp 2>&1 | cut -f1)"
+    ;;
+  update)
+    info "Updating from GitHub..."
+    cd "$APP_DIR"
+    git pull --rebase --autostash
+    "$APP_DIR/venv/bin/pip" install -r requirements.txt --quiet
+    systemctl restart "$SERVICE"
+    ok "Updated and restarted."
+    ;;
+  uninstall)
+    echo -e "${RED}آیا مطمئنی می‌خواهی MediODL را کامل حذف کنی؟ (این عمل DB و کوکی‌ها را هم حذف می‌کند)${NC}"
+    read -p "بنویس YES برای تأیید: " ans
+    [[ "$ans" != "YES" ]] && { echo "لغو شد."; exit 0; }
+    bash "$APP_DIR/uninstall.sh"
+    ;;
+  help|--help|-h|*) usage ;;
+esac
