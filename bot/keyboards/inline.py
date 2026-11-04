@@ -18,16 +18,13 @@ def force_join_kb(missing: list) -> InlineKeyboardMarkup:
 
 def after_video_kb(platform: str, url: str, token: str | None = None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    # Fun extra row
     kb.row(
         InlineKeyboardButton(text="🎬 دانلود دوباره", callback_data=f"redl:{platform}"),
         InlineKeyboardButton(text="🔗 لینک اصلی", url=url[:200]),
     )
     kb.row(
         InlineKeyboardButton(text="📤 اشتراک‌گذاری", switch_inline_query=url[:100]),
-        InlineKeyboardButton(text="😍 دمت گرم!", callback_data="fun:thanks"),
     )
-    kb.row(InlineKeyboardButton(text="🎲 فکت باحال", callback_data="fun:fact"))
     return kb.as_markup()
 
 def captcha_kb(options: list[str], correct: str) -> InlineKeyboardMarkup:
@@ -88,7 +85,6 @@ def admin_main_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🗑️ حذف خودکار", callback_data="adm:autodel"),
         InlineKeyboardButton(text="🔄 بروزرسانی", callback_data="adm:update"),
     )
-    kb.row(InlineKeyboardButton(text="😎 حالت فان", callback_data="adm:funmode"))
     kb.row(InlineKeyboardButton(text="❌ بستن", callback_data="adm:close"))
     return kb.as_markup()
 
@@ -176,12 +172,10 @@ def admin_cookies_kb() -> InlineKeyboardMarkup:
 def admin_captcha_kb(settings: dict) -> InlineKeyboardMarkup:
     enabled = settings.get("captcha_enabled", "0") == "1"
     antispam = settings.get("antispam_enabled", "1") == "1"
-    funmode = settings.get("fun_mode", "1") == "1"
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text=f"🛡️ کپچا: {'✅' if enabled else '❌'}", callback_data="adm:cfg:captcha_enabled"))
     kb.row(InlineKeyboardButton(text=f"🧮 حالت: {settings.get('captcha_mode','emoji')}", callback_data="adm:cfg:captcha_mode"))
     kb.row(InlineKeyboardButton(text=f"🚦 ضداسپم: {'✅' if antispam else '❌'}", callback_data="adm:cfg:antispam_enabled"))
-    kb.row(InlineKeyboardButton(text=f"😎 حالت فان: {'✅' if funmode else '❌'}", callback_data="adm:cfg:fun_mode"))
     kb.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="adm:main"))
     return kb.as_markup()
 

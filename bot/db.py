@@ -100,21 +100,6 @@ CREATE TABLE IF NOT EXISTS pending_downloads (
     meta_json   TEXT,
     created_at  INTEGER
 );
-
--- Fun: track seen jokes/facts per user to avoid repeats
-CREATE TABLE IF NOT EXISTS user_seen_jokes (
-    user_id     INTEGER,
-    joke_id     INTEGER,
-    seen_at     INTEGER,
-    PRIMARY KEY (user_id, joke_id)
-);
-
-CREATE TABLE IF NOT EXISTS user_seen_facts (
-    user_id     INTEGER,
-    fact_id     INTEGER,
-    seen_at     INTEGER,
-    PRIMARY KEY (user_id, fact_id)
-);
 """
 
 async def init_db():
@@ -393,46 +378,3 @@ async def remove_delete_entry(eid: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM auto_delete_queue WHERE id=?", (eid,))
         await db.commit()
-
-# --- Fun: non-repeating jokes/facts ---
-async def get_next_fun_item(user_id: int, kind: str, total: int) -> int:
-    """
-    Returns next unseen joke/fact index for user.
-    kind: 'joke' or 'fact'
-    Implements: pick random from not-yet-seen; if all seen, reset and start over.
-    Returns index 0..total-1
-    """
-    table = "user_seen_jokes" if kind == "joke" else "user_seen_facts"
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        # Count seen
-        async with db.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id=?", (user_id,)) as cur:
-            seen_cnt = (await cur.fetchone())[0]
-        if seen_cnt >= total:
-            # All seen -> reset
-            await db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
-            await db.commit()
-            seen_cnt = 0
-        # Get seen ids
-        async with db.execute(f"SELECT {kind}_id FROM {table} WHERE user_id=?", (user_id,)) as cur:
-            rows = await cur.fetchall()
-            seen_set = {r[0] for r in rows}
-        # Pick random unseen
-        # For performance, pick random via Python, not SQL ORDER BY RANDOM()
-        import random
-        unseen = [i for i in range(total) if i not in seen_set]
-        if not unseen:
-            # Fallback (should not happen after reset)
-            unseen = list(range(total))
-        chosen = random.choice(unseen)
-        await db.execute(f"INSERT INTO {table}(user_id, {kind}_id, seen_at) VALUES(?, ?, ?)", (user_id, chosen, int(time.time())))
-        await db.commit()
-        return chosen
-
-async def get_fun_stats(user_id: int) -> dict:
-    """Return counts for user fun progress"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        out = {}
-        for kind, table in [("joke", "user_seen_jokes"), ("fact", "user_seen_facts")]:
-            async with db.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id=?", (user_id,)) as cur:
-                out[kind] = (await cur.fetchone())[0]
-        return out

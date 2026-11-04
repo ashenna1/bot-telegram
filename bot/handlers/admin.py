@@ -65,8 +65,8 @@ async def show_main(target: Message | CallbackQuery):
         dl_today = today[1] if len(today) > 1 else 0
         req_today = today[3] if len(today) > 3 else 0
         txt = (
-            "👑 <b>پنل مدیریت MediGo</b> 😎\n"
-            f"🏷️ نسخه <code>{VERSION}</code> | ✨ حالت فان: {'روشن 🎉' if settings.get('fun_mode','1')=='1' else 'خاموش'}\n"
+            "👑 <b>پنل مدیریت MediGo</b>\n"
+            f"🏷️ نسخه <code>{VERSION}</code>\n"
             f"👥 کاربران: <b>{total_users}</b> | 📥 امروز: <b>{dl_today}</b> | 📨 درخواست: <b>{req_today}</b>\n"
             f"⚙️ کیفیت: <b>{settings.get('max_video_height','1080')}p</b> | 🛠️ تعمیر: <b>{'ON' if settings.get('maintenance_mode')=='1' else 'OFF'}</b>\n"
             f"🛡️ کپچا: <b>{'ON' if settings.get('captcha_enabled','0')=='1' else 'OFF'}</b> | 🗑️ حذف: <b>{settings.get('auto_delete_hours','0')}h</b>\n"
@@ -185,7 +185,7 @@ async def cb_cfg(callback: CallbackQuery, state: FSMContext):
     try:
         s = await get_all_settings()
         cur = s.get(key, "")
-        toggle_keys = ("show_audio_separately", "maintenance_mode", "captcha_enabled", "antispam_enabled", "fun_mode", "quality_selection", "log_to_admin_dm", "daily_report_enabled")
+        toggle_keys = ("show_audio_separately", "maintenance_mode", "captcha_enabled", "antispam_enabled", "quality_selection", "log_to_admin_dm", "daily_report_enabled")
         if key in toggle_keys:
             new = "0" if cur == "1" else "1"
             await set_setting(key, new)
@@ -194,7 +194,7 @@ async def cb_cfg(callback: CallbackQuery, state: FSMContext):
             # Refresh correct panel
             ns = await get_all_settings()
             try:
-                if key in ("captcha_enabled", "antispam_enabled", "fun_mode"):
+                if key in ("captcha_enabled", "antispam_enabled"):
                     await callback.message.edit_reply_markup(reply_markup=admin_captcha_kb(ns))
                 elif key in ("log_to_admin_dm", "daily_report_enabled"):
                     await callback.message.edit_reply_markup(reply_markup=admin_logchan_kb(ns))
@@ -667,10 +667,10 @@ async def cb_captcha_panel(callback: CallbackQuery):
     s=await get_all_settings()
     txt=(
         "🛡️ <b>کپچا و ضداسپم</b>\n\n"
-        "کپچا فقط بار اول /start میاد — حالت فان: ایموجی 🍎\n"
+        "کپچا فقط بار اول /start میاد.\n"
         "ضداسپم: اگر کاربر بیش از حد لینک بفرسته موقت بن می‌شه.\n"
         f"کپچا: {'✅' if s.get('captcha_enabled')=='1' else '❌'} | حالت: {s.get('captcha_mode')}\n"
-        f"ضداسپم: {'✅' if s.get('antispam_enabled')=='1' else '❌'} | فان: {'✅' if s.get('fun_mode')=='1' else '❌'}\n"
+        f"ضداسپم: {'✅' if s.get('antispam_enabled')=='1' else '❌'}\n"
     )
     await callback.message.edit_text(txt, parse_mode="HTML", reply_markup=admin_captcha_kb(s))
     try: await callback.answer()
@@ -736,16 +736,7 @@ async def cb_autodel_set(callback: CallbackQuery):
     except: pass
     await cb_autodel(callback)
 
-# ---------- Fun mode ----------
-@router.callback_query(ADMIN_FILTER, F.data == "adm:funmode")
-async def cb_funmode(callback: CallbackQuery):
-    cur=await get_setting("fun_mode","1")
-    new="0" if cur=="1" else "1"
-    await set_setting("fun_mode", new)
-    try: await callback.answer(f"حالت فان {'روشن 😎' if new=='1' else 'خاموش'}")
-    except: pass
-    # Refresh main
-    await show_main(callback)
+
 
 # ---------- Status ----------
 @router.callback_query(ADMIN_FILTER, F.data == "adm:status")
