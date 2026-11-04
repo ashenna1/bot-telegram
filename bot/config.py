@@ -96,9 +96,6 @@ DEFAULT_SETTINGS = {
     "antispam_enabled": "1",
     "antispam_max_per_min": "5",
     "antispam_ban_minutes": "10",
-    # Fun
-    "fun_mode": "1",
-    "fun_greeting_enabled": "1",
     # Quality selection
     "quality_selection": "1",  # 1 = user picks, 0 = auto best
     # Log channel
