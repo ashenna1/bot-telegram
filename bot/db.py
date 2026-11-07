@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS auto_delete_queue (
     delete_at   INTEGER
 );
 
+-- Keep the source for each sent video's cover button, including after restarts.
+CREATE TABLE IF NOT EXISTS video_covers (
+    token       TEXT PRIMARY KEY,
+    chat_id     INTEGER NOT NULL,
+    url         TEXT NOT NULL,
+    platform    TEXT NOT NULL
+);
+
 -- For quality selection cache (short-lived, but persisted for simplicity)
 CREATE TABLE IF NOT EXISTS pending_downloads (
     token       TEXT PRIMARY KEY,
@@ -377,4 +385,21 @@ async def get_due_deletes(limit=50):
 async def remove_delete_entry(eid: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM auto_delete_queue WHERE id=?", (eid,))
+        await db.commit()
+
+# --- Video cover buttons ---
+async def save_video_cover(token: str, chat_id: int, url: str, platform: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("INSERT INTO video_covers(token, chat_id, url, platform) VALUES(?, ?, ?, ?)",
+                         (token, chat_id, url, platform))
+        await db.commit()
+
+async def get_video_cover(token: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute("SELECT chat_id, url, platform FROM video_covers WHERE token=?", (token,)) as cur:
+            return await cur.fetchone()
+
+async def delete_video_cover(token: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM video_covers WHERE token=?", (token,))
         await db.commit()
