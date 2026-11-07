@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 import json
+import tempfile
 from pathlib import Path
 
 from aiogram import Router, F, Bot
@@ -19,12 +20,12 @@ from bot.db import (
     get_setting, upsert_user, get_user, check_rate_limit, log_download,
     set_captcha, get_captcha, clear_captcha, inc_captcha_attempt, set_verified,
     save_pending, get_pending, delete_pending, queue_auto_delete,
-    check_flood_per_min, add_warning
+    check_flood_per_min, add_warning, save_video_cover, get_video_cover, delete_video_cover
 )
 from bot.utils.links import find_first_supported_url, platform_emoji, platform_name_fa, is_audio_only_platform
 from bot.utils.helpers import build_caption, fmt_size, fmt_duration, truncate, random_compliment, fun_greeting
 from bot.utils.captcha import generate_captcha, captcha_expired
-from bot.utils.downloader import download_media
+from bot.utils.downloader import download_media, download_cover
 from bot.utils.force_join import check_user_joined
 from bot.keyboards.inline import force_join_kb, after_video_kb, captcha_kb, quality_kb
 
@@ -133,6 +134,7 @@ async def cmd_help(message: Message):
         "• 🧵 تردز\n\n"
         "هر لینک = <b>ویدیو باکیفیت + صدای جدا</b> 🎬🎧\n"
         "✨ می‌تونی کیفیت رو هم انتخاب کنی: 480/720/1080/فقط صدا\n"
+        "🖼 برای دریافت کاور، دکمهٔ زیر ویدیوی ارسالی رو بزن.\n"
         "💡 ویدیوهای بالای 50MB با Local Bot API تا 2GB هم میاد!\n",
         parse_mode="HTML",
     )
@@ -202,6 +204,65 @@ async def cb_check_join(callback: CallbackQuery, bot: Bot):
         except: pass
     else:
         await callback.answer("❌ هنوز عضو نشدی.", show_alert=True)
+
+# Limit concurrent cover extraction so repeated clicks cannot spawn unlimited yt-dlp jobs.
+_active_cover_users: set[int] = set()
+_MAX_ACTIVE_COVERS = 3
+
+@router.callback_query(F.data.startswith("cover:"))
+async def cb_cover(callback: CallbackQuery, bot: Bot):
+    token = callback.data.partition(":")[2]
+    record = await get_video_cover(token)
+    if not record or not callback.message or record[0] != callback.message.chat.id:
+        await callback.answer("⚠️ اطلاعات کاور پیدا نشد؛ دوباره لینک رو بفرست.", show_alert=True)
+        return
+    user_id = callback.from_user.id
+    row = await get_user(user_id)
+    if row and len(row) > 6 and row[6] == 1:
+        await callback.answer("🚫 دسترسی شما مسدود است.", show_alert=True)
+        return
+    if await get_setting("maintenance_mode", "0") == "1" and user_id not in ADMIN_IDS:
+        await callback.answer("🛠 ربات در حال تعمیر است.", show_alert=True)
+        return
+    if await need_captcha(user_id):
+        await callback.answer("ابتدا با /start تأیید هویت رو انجام بده.", show_alert=True)
+        return
+    if await get_setting("force_join_enabled", "0") == "1":
+        joined, _ = await check_user_joined(bot, user_id)
+        if not joined:
+            await callback.answer("ابتدا عضو کانال‌های اجباری شو و /start بزن.", show_alert=True)
+            return
+    if user_id in _active_cover_users or len(_active_cover_users) >= _MAX_ACTIVE_COVERS:
+        await callback.answer("⏳ لطفاً چند لحظه بعد دوباره امتحان کن.", show_alert=True)
+        return
+    _active_cover_users.add(user_id)
+    try:
+        await callback.answer("⏳ در حال دریافت کاور...")
+        from bot.config import TMP_DIR
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="cover_", dir=TMP_DIR) as tmp:
+            cover = await download_cover(record[1], record[2], Path(tmp))
+            if not cover:
+                await bot.send_message(record[0], "⚠️ برای این محتوا کاوری در دسترس نیست.")
+                return
+            if cover.stat().st_size > 10 * 1024 * 1024:
+                await bot.send_message(record[0], "⚠️ حجم کاور برای ارسال به تلگرام خیلی زیاده.")
+                return
+            try:
+                sent = await bot.send_photo(chat_id=record[0], photo=FSInputFile(cover), caption="🖼 کاور ویدیو")
+            except TelegramBadRequest:
+                sent = await bot.send_document(chat_id=record[0], document=FSInputFile(cover), caption="🖼 کاور ویدیو")
+            auto_h = float(await get_setting("auto_delete_hours", "0") or 0)
+            if auto_h > 0:
+                await queue_auto_delete(record[0], sent.message_id, auto_h)
+    except Exception:
+        log.exception("cover retrieval failed for %s", record[2])
+        try:
+            await bot.send_message(record[0], "⚠️ دریافت کاور ممکن نشد؛ لطفاً بعداً دوباره تلاش کن.")
+        except Exception:
+            log.warning("could not report cover error", exc_info=True)
+    finally:
+        _active_cover_users.discard(user_id)
 
 # ---- Quality selection callback ----
 @router.callback_query(F.data.startswith("q:"))
@@ -317,10 +378,26 @@ async def do_download(trigger_msg: Message, bot: Bot, url: str, platform: str, q
         except: pass
 
         sent_video_msg = None
+        cover_token = uuid.uuid4().hex
         try:
-            sent_video_msg = await bot.send_video(chat_id=chat_id, video=FSInputFile(video_path), caption=caption[:1024], parse_mode="HTML", supports_streaming=True, duration=int(meta.get("duration") or 0), width=int(meta.get("width") or 0) or None, height=int(meta.get("height") or 0) or None, reply_markup=after_video_kb(platform, url))
-        except TelegramBadRequest:
-            sent_video_msg = await bot.send_document(chat_id=chat_id, document=FSInputFile(video_path, filename=f"{Path(video_path).stem}.mp4"), caption=caption[:1024], parse_mode="HTML", reply_markup=after_video_kb(platform, url))
+            await save_video_cover(cover_token, chat_id, url, platform)
+        except Exception:
+            # A cover storage failure must not prevent delivery of the video.
+            log.exception("could not save cover source")
+            cover_token = None
+        keyboard = after_video_kb(platform, url, cover_token)
+        try:
+            try:
+                sent_video_msg = await bot.send_video(chat_id=chat_id, video=FSInputFile(video_path), caption=caption[:1024], parse_mode="HTML", supports_streaming=True, duration=int(meta.get("duration") or 0), width=int(meta.get("width") or 0) or None, height=int(meta.get("height") or 0) or None, reply_markup=keyboard)
+            except TelegramBadRequest:
+                sent_video_msg = await bot.send_document(chat_id=chat_id, document=FSInputFile(video_path, filename=f"{Path(video_path).stem}.mp4"), caption=caption[:1024], parse_mode="HTML", reply_markup=keyboard)
+        except Exception:
+            if cover_token:
+                try:
+                    await delete_video_cover(cover_token)
+                except Exception:
+                    log.exception("could not remove unused cover source")
+            raise
 
         auto_h = float(await get_setting("auto_delete_hours", "0") or 0)
         if auto_h > 0 and sent_video_msg:

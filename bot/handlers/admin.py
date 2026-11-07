@@ -748,7 +748,7 @@ async def cb_status(callback: CallbackQuery):
     try:
         r=await asyncio.create_subprocess_exec("systemctl","is-active","mediodl-bot", stdout=asyncio.subprocess.PIPE)
         out,_=await r.communicate()
-        svc=out.decode().strip() or "نامشخص"
+        svc=out.decode("utf-8", errors="replace").strip() or "نامشخص"
     except: svc="نامشخص"
     # Count pending deletes
     import aiosqlite

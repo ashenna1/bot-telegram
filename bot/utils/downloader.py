@@ -32,6 +32,18 @@ FFMPEG_BIN = _find_bin("ffmpeg")
 DENO_BIN = _find_bin("deno")
 log.info("Bins: yt-dlp=%s ffmpeg=%s deno=%s", YTDLP_BIN, FFMPEG_BIN, DENO_BIN)
 
+def _safe_decode(b: bytes | None) -> str:
+    """Decode subprocess output safely — fixes 'utf-8 codec can't decode byte 0xac'."""
+    if not b:
+        return ""
+    # yt-dlp can emit non-utf8 bytes (cookies, headers, Persian filenames, Windows-1256)
+    for enc in ("utf-8", "utf-8-sig"):
+        try:
+            return b.decode(enc, errors="replace")
+        except Exception:
+            continue
+    return b.decode("latin-1", errors="replace")
+
 def _cookie_args(platform: str) -> list[str]:
     mapping = {
         "youtube": COOKIES_YT,
@@ -80,11 +92,9 @@ def _base_opts(platform: str, for_probe: bool = False) -> list[str]:
         # Enable PO token file if present (advanced)
         pot = COOKIES_DIR / "youtube_pot.txt"
         if pot.exists():
-            # pot file should contain JSON or token string; yt-dlp reads via extractor-args
             try:
-                token = pot.read_text().strip()
+                token = pot.read_text(encoding="utf-8", errors="replace").strip()
                 if token:
-                    # If file is JSON like {"poToken":...}, pass as is
                     opts += ["--extractor-args", f"youtube:po_token={token}"]
             except Exception:
                 pass
@@ -105,6 +115,15 @@ def _base_opts(platform: str, for_probe: bool = False) -> list[str]:
 # ---------- Helpers for friendly errors ----------
 def _friendly_probe_error(platform: str, msg: str) -> str:
     low = msg.lower()
+    # handle raw decode errors that previously crashed with "'utf-8' codec can't decode byte 0xac"
+    if "codec can't decode" in low or "can't decode byte" in low or "invalid start byte" in low:
+        return (
+            "⚠️ خطای انکودینگ در پاسخ یوتیوب (معمولاً به خاطر کوکی خراب یا yt-dlp قدیمی).\n"
+            "• روی سرور: <code>mediodl update</code> بزن\n"
+            "• کوکی یوتیوب را دوباره با فرمت Netscape (Get cookies.txt LOCALLY) آپلود کن\n"
+            "• اگر کوکی از مرورگر فارسی گرفتی، مطمئن شو فایل utf-8 باشد\n"
+            f"جزئیات: {msg[:300]}"
+        )
     if "private" in low or "login" in low or "sign in" in low:
         return "🔒 این محتوا خصوصی است یا نیاز به ورود دارد. کوکی یوتیوب را در پنل ادمین بروزرسانی کن."
     if "unsupported url" in low:
@@ -125,6 +144,11 @@ def _friendly_probe_error(platform: str, msg: str) -> str:
 
 def _friendly_download_error(platform: str, msg: str) -> str:
     low = msg.lower()
+    if "codec can't decode" in low or "can't decode byte" in low:
+        return (
+            "⚠️ خطای انکودینگ — کوکی یا خروجی yt-dlp خراب است.\n"
+            "کوکی را دوباره با افزونه Get cookies.txt LOCALLY بگیر و آپلود کن، سپس <code>mediodl update</code> بزن."
+        )
     if "private" in low or "login" in low:
         return "🔒 محتوا خصوصی است. با ادمین تماس بگیر."
     if "no video formats found" in low:
@@ -152,21 +176,51 @@ async def probe_info(url: str, platform: str) -> Dict[str, Any]:
         raise RuntimeError("⏱️ زمان بررسی لینک تمام شد. دوباره تلاش کنید.")
 
     if proc.returncode != 0:
-        msg = (err.decode() or out.decode())[:2000]
+        msg = (_safe_decode(err) or _safe_decode(out))[:2000]
         log.warning("probe failed %s platform=%s: %s", url, platform, msg)
         if platform == "spotify":
             raise RuntimeError("SPOTIFY_SEARCH_FALLBACK")
-        # Preserve raw for caller to detect No formats, but also provide friendly
         low = msg.lower()
         if "no video formats found" in low:
-            # Don't lose raw; caller will format friendly but we keep log
             raise RuntimeError(_friendly_probe_error(platform, msg))
         raise RuntimeError(_friendly_probe_error(platform, msg))
 
     try:
-        return json.loads(out.decode())
+        text = _safe_decode(out)
+        return json.loads(text)
+    except UnicodeDecodeError as e:
+        log.warning("probe json decode error: %s", e)
+        raise RuntimeError(
+            "⚠️ خطای انکودینگ در پاسخ یوتیوب (byte 0xac). کوکی خراب یا yt-dlp قدیمی است — "
+            "<code>mediodl update</code> بزن و کوکی یوتیوب را دوباره آپلود کن."
+        )
     except Exception as e:
+        log.warning("probe json parse error: %s out=%s", e, _safe_decode(out)[:500])
         raise RuntimeError(f"❌ پاسخ نامعتبر از دانلودر: {e}")
+
+async def download_cover(url: str, platform: str, workdir: Path) -> Path | None:
+    """Fetch the platform's thumbnail with the same cookies as video downloads.
+
+    Re-extract on demand because CDN thumbnail URLs (notably Instagram's) expire.
+    The caller owns and removes workdir after the Telegram upload.
+    """
+    cmd = [YTDLP_BIN, "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg",
+           "-o", str(workdir / "cover.%(ext)s")] + _base_opts(platform) + ["--", url]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=90)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        await proc.communicate()
+        raise
+    if proc.returncode != 0:
+        log.warning("cover download failed for %s: %s", platform, _safe_decode(err)[-500:])
+        raise RuntimeError("دریافت کاور ممکن نشد. لطفاً دوباره تلاش کن.")
+    cover = workdir / "cover.jpg"
+    if cover.is_file() and cover.stat().st_size > 0:
+        return cover
+    return None
 
 def _build_format(max_h: int, audio_only: bool = False) -> str:
     """
@@ -228,7 +282,7 @@ async def download_media(url: str, platform: str, max_height: int | None = None,
             proc.kill()
             raise RuntimeError("⏱️ دانلود صدا خیلی طول کشید.")
         if proc.returncode != 0:
-            msg = (err.decode() or out.decode())[:1000]
+            msg = (_safe_decode(err) or _safe_decode(out))[:1000]
             raise RuntimeError(_friendly_download_error(platform, msg))
         audio_cands = sorted(base.glob("*"), key=lambda p: p.stat().st_size if p.exists() else 0, reverse=True)
         audio_cands = [p for p in audio_cands if p.suffix.lower() in (".mp3", ".m4a", ".opus", ".ogg", ".webm") and p.stat().st_size > 1024]
@@ -277,7 +331,7 @@ async def download_media(url: str, platform: str, max_height: int | None = None,
         if proc.returncode == 0:
             break  # success, go to file discovery
         else:
-            msg = (err.decode() or out.decode())[:2000]
+            msg = (_safe_decode(err) or _safe_decode(out))[:2000]
             low = msg.lower()
             log.warning("download attempt %d failed: %s", attempt, msg[:500])
             # If it's No video formats and we have another attempt, retry

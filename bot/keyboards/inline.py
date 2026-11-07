@@ -22,6 +22,8 @@ def after_video_kb(platform: str, url: str, token: str | None = None) -> InlineK
         InlineKeyboardButton(text="🎬 دانلود دوباره", callback_data=f"redl:{platform}"),
         InlineKeyboardButton(text="🔗 لینک اصلی", url=url[:200]),
     )
+    if token:
+        kb.row(InlineKeyboardButton(text="🖼 دریافت کاور", callback_data=f"cover:{token}"))
     kb.row(
         InlineKeyboardButton(text="📤 اشتراک‌گذاری", switch_inline_query=url[:100]),
     )
