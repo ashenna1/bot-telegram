@@ -245,13 +245,13 @@ async def cb_cover(callback: CallbackQuery, bot: Bot):
             if not cover:
                 await bot.send_message(record[0], "⚠️ برای این محتوا کاوری در دسترس نیست.")
                 return
-            if cover.stat().st_size > 10 * 1024 * 1024:
+            from bot.config import USE_LOCAL_API
+            max_upload = int(await get_setting("max_upload_mb", "2000") or 2000)
+            effective_limit_mb = max_upload if USE_LOCAL_API else 50
+            if cover.stat().st_size > effective_limit_mb * 1024 * 1024:
                 await bot.send_message(record[0], "⚠️ حجم کاور برای ارسال به تلگرام خیلی زیاده.")
                 return
-            try:
-                sent = await bot.send_photo(chat_id=record[0], photo=FSInputFile(cover), caption="🖼 کاور ویدیو")
-            except TelegramBadRequest:
-                sent = await bot.send_document(chat_id=record[0], document=FSInputFile(cover), caption="🖼 کاور ویدیو")
+            sent = await bot.send_document(chat_id=record[0], document=FSInputFile(cover), caption="🖼 کاور ویدیو")
             auto_h = float(await get_setting("auto_delete_hours", "0") or 0)
             if auto_h > 0:
                 await queue_auto_delete(record[0], sent.message_id, auto_h)
