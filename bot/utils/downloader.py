@@ -204,7 +204,8 @@ async def download_cover(url: str, platform: str, workdir: Path) -> Path | None:
     Re-extract on demand because CDN thumbnail URLs (notably Instagram's) expire.
     The caller owns and removes workdir after the Telegram upload.
     """
-    cmd = [YTDLP_BIN, "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg",
+    # Keep the original thumbnail bytes: converting to JPEG can lower quality.
+    cmd = [YTDLP_BIN, "--skip-download", "--write-thumbnail",
            "-o", str(workdir / "cover.%(ext)s")] + _base_opts(platform) + ["--", url]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
@@ -217,9 +218,9 @@ async def download_cover(url: str, platform: str, workdir: Path) -> Path | None:
     if proc.returncode != 0:
         log.warning("cover download failed for %s: %s", platform, _safe_decode(err)[-500:])
         raise RuntimeError("دریافت کاور ممکن نشد. لطفاً دوباره تلاش کن.")
-    cover = workdir / "cover.jpg"
-    if cover.is_file() and cover.stat().st_size > 0:
-        return cover
+    for cover in workdir.glob("cover.*"):
+        if cover.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif", ".bmp"} and cover.is_file() and cover.stat().st_size > 0:
+            return cover
     return None
 
 def _build_format(max_h: int, audio_only: bool = False) -> str:

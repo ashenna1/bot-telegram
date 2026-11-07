@@ -40,13 +40,15 @@ class CoverTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_download_cover_invokes_ytdlp_and_cookies(self):
         proc = SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b'', b'')))
-        (self.path / 'cover.jpg').write_bytes(b'image')
+        (self.path / 'cover.webp').write_bytes(b'original-webp-image')
         with patch.object(downloader, '_base_opts', return_value=['--cookies', 'cookies.txt']), patch.object(downloader.asyncio, 'create_subprocess_exec', AsyncMock(return_value=proc)) as run:
             path = await downloader.download_cover('https://example.com/post', 'instagram', self.path)
-        self.assertEqual(path, self.path / 'cover.jpg')
+        self.assertEqual(path, self.path / 'cover.webp')
+        self.assertEqual(path.read_bytes(), b'original-webp-image')
         args = run.await_args.args
         self.assertIn('--write-thumbnail', args)
         self.assertIn('--skip-download', args)
+        self.assertNotIn('--convert-thumbnails', args)
         self.assertIn('--cookies', args)
         self.assertEqual(args[-2:], ('--', 'https://example.com/post'))
 
@@ -62,21 +64,56 @@ class CoverTests(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(data='cover:token', message=SimpleNamespace(chat=SimpleNamespace(id=chat_id)),
                                from_user=SimpleNamespace(id=7), answer=AsyncMock())
 
-    async def test_callback_send_and_cleanup_with_photo_fallback(self):
+    async def test_callback_sends_original_as_document_and_cleans_up(self):
         await db.save_video_cover('token', 123, 'https://instagram.com/p/x', 'instagram')
         callback = self.callback()
-        bot = SimpleNamespace(send_photo=AsyncMock(side_effect=TelegramBadRequest(method=SendPhoto(chat_id=123, photo='x'), message='bad image')), send_document=AsyncMock(return_value=SimpleNamespace(message_id=9)), send_message=AsyncMock())
+        delivered = {}
+        async def send_document(*, chat_id, document, caption):
+            delivered.update(chat_id=chat_id, filename=document.filename,
+                             data=Path(document.path).read_bytes(), caption=caption)
+            return SimpleNamespace(message_id=9)
+        bot = SimpleNamespace(send_photo=AsyncMock(), send_document=AsyncMock(side_effect=send_document), send_message=AsyncMock())
         async def fetch(url, platform, workdir):
-            p = workdir / 'cover.jpg'
-            p.write_bytes(b'image')
+            p = workdir / 'cover.webp'
+            p.write_bytes(b'original-webp-image')
             return p
         with patch('bot.config.TMP_DIR', self.path), patch.object(user, 'download_cover', side_effect=fetch), patch.object(user, 'need_captcha', AsyncMock(return_value=False)):
             await user.cb_cover(callback, bot)
         callback.answer.assert_awaited_once()
-        bot.send_photo.assert_awaited_once()
+        bot.send_photo.assert_not_awaited()
         bot.send_document.assert_awaited_once()
+        self.assertEqual(delivered['data'], b'original-webp-image')
+        self.assertEqual(delivered['filename'], 'cover.webp')
+        self.assertEqual(delivered['chat_id'], 123)
         self.assertEqual(list(self.path.glob('cover_*')), [])
         self.assertFalse(user._active_cover_users)
+
+    async def test_document_can_be_larger_than_photo_limit(self):
+        await db.save_video_cover('token', 123, 'https://instagram.com/p/x', 'instagram')
+        bot = SimpleNamespace(send_photo=AsyncMock(), send_document=AsyncMock(return_value=SimpleNamespace(message_id=9)), send_message=AsyncMock())
+        async def fetch(url, platform, workdir):
+            p = workdir / 'cover.png'
+            with p.open('wb') as f:
+                f.truncate(11 * 1024 * 1024)
+            return p
+        with patch('bot.config.TMP_DIR', self.path), patch('bot.config.USE_LOCAL_API', False), patch.object(user, 'download_cover', side_effect=fetch), patch.object(user, 'need_captcha', AsyncMock(return_value=False)):
+            await user.cb_cover(self.callback(), bot)
+        bot.send_document.assert_awaited_once()
+        bot.send_photo.assert_not_awaited()
+
+    async def test_document_larger_than_upload_limit_is_rejected(self):
+        await db.save_video_cover('token', 123, 'https://instagram.com/p/x', 'instagram')
+        bot = SimpleNamespace(send_document=AsyncMock(), send_message=AsyncMock())
+        async def fetch(url, platform, workdir):
+            p = workdir / 'cover.jpg'
+            with p.open('wb') as f:
+                f.truncate(50 * 1024 * 1024 + 1)
+            return p
+        with patch('bot.config.TMP_DIR', self.path), patch('bot.config.USE_LOCAL_API', False), patch.object(user, 'download_cover', side_effect=fetch), patch.object(user, 'need_captcha', AsyncMock(return_value=False)):
+            await user.cb_cover(self.callback(), bot)
+        bot.send_document.assert_not_awaited()
+        bot.send_message.assert_awaited_once()
+        self.assertEqual(list(self.path.glob('cover_*')), [])
 
     async def test_missing_and_wrong_chat_do_not_fetch(self):
         await db.save_video_cover('token', 123, 'https://youtube.com/watch?v=x', 'youtube')
